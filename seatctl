@@ -1,0 +1,158 @@
+#!/bin/bash
+
+script_base_dir="$(dirname "$(readlink -f "${0}")")"
+
+declare -a param_names
+declare -A param_long
+declare -A param_short
+declare -A param_type
+declare -A param_optional
+declare -A param_default
+declare -A param_help
+declare -A param_value
+declare -A param_found
+declare -A param_set
+
+declare_param() {
+    local name=$1
+    local long=$2
+    local short=$3
+    local type=$4
+    local optional=$5
+    local default=$6
+    local help=$7
+
+    echo "name=${name},long=${long},short=${short},type=${type},optional=${optional},default=${default},help=${help}"
+
+    param_names+=(${name})
+    param_long[${name}]=$long
+    param_short[${name}]=$short
+    param_type[${name}]=$type
+    param_optional[${name}]=$optional
+    param_default[${name}]=$default
+    param_help[${name}]=$help
+    param_set[${name}]=false
+}
+
+declare_bool() {
+    local name=$1
+    local long=$2
+    local short=$3
+    local help=$4
+
+    declare_param "${name}" "${long}" "${short}" boolean false false "${help}"
+}
+
+declare_optional_value() {
+    local name=$1
+    local long=$2
+    local short=$3
+    local default=$4
+    local help=$5
+
+    declare_param "${name}" "${long}" "${short}" value true "${default}" "${help}"
+}
+
+declare_required_value() {
+    local name=$1
+    local long=$2
+    local short=$3
+    local default=$4
+    local help=$5
+
+    declare_param "${name}" "${long}" "${short}" value false "${default}" "${help}"
+}
+
+#                      name           long  short type    optional default        help
+declare_bool           bool_example   along a                                     bool_example_help
+declare_optional_value value_example  blong b                      default_value  value_example_message
+declare_required_value value_example2 clong c                      default_value2 value_example_message2
+
+while [ $# -gt 0 ]; do
+    echo "Processing <$1>"
+
+    case "${1}" in
+        --)
+            echo "BREAK"
+            shift
+            break
+            ;;
+        -*)
+            echo "Processing args"
+            for param_name in ${param_names[@]}; do
+                param_found[${param_name}]=false
+
+                if test "$1" == "--${param_long[${param_name}]}"; then
+                    param_found[${param_name}]=true
+
+                elif test "$1" == "-${param_short[${param_name}]}"; then
+                    param_found[${param_name}]=true
+
+                elif test "$(echo "$1" | cut -d'=' -f1)" == "--${param_long[${param_name}]}"; then
+                    param_found[${param_name}]=true
+                    param_value[${param_name}]=$(echo "$1" | cut -d'=' -f2-)
+                    param_set[${param_name}]=true
+
+                elif test "$(echo "$1" | cut -d'=' -f1)" == "-${param_short[${param_name}]}"; then
+                    param_found[${param_name}]=true
+                    param_value[${param_name}]=$(echo "$1" | cut -d'=' -f2-)
+                    param_set[${param_name}]=true
+                fi
+
+                if ${param_found[${param_name}]}; then
+                    echo "Found ${param_name}"
+
+                    if test "${param_type[$param_name]}" == "boolean"; then
+                        param_value[${param_name}]=true
+                        param_set[${param_name}]=true
+
+                    elif test "${param_type[$param_name]}" == "value" && ! ${param_set[${param_name}]}; then
+                        shift
+                        param_value[${param_name}]=$1
+                        param_set[${param_name}]=true
+                    fi
+
+                    if test -z "${param_value[$param_name]}" && test -n "${param_default[${param_name}]}"; then
+                        param_value[${param_name}]=${param_default[${param_name}]}
+                        param_set[${param_name}]=true
+                    fi
+
+                    echo "  Value ${param_value[$param_name]}"
+                fi
+            done
+            ;;
+
+        *)
+            command=$1
+            echo "Processing command <${command}>"
+            if ! test -f "${script_base_dir}/command/${command}" || ! test -x "${script_base_dir}/command/${command}"; then
+                echo "ERROR: Command ${command} does not exist"
+                exit 1
+            fi
+            shift
+            break
+            ;;
+    esac
+
+    shift
+done
+
+missing=false
+for param_name in ${param_names[@]}; do
+    echo "${param_name}:long=${param_long[${param_name}]},optional=${param_optional[${param_name}]},set=${param_set[${param_name}]}."
+    if ! ${param_optional[${param_name}]} && ! ${param_set[${param_name}]}; then
+        missing=true
+        echo "ERROR: Missing parameter ${param_name}"
+    fi
+done
+if ${missing}; then
+    echo "ERROR: Missing required parameters."
+    exit 1
+fi
+
+if test -z "${command}"; then
+    echo "ERROR: Command not specified"
+    exit 1
+fi
+source "command/${command}"
+echo "$@"
